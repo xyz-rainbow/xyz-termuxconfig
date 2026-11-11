@@ -594,6 +594,9 @@ install_distro_apps_modular() {
       mkdir -p /usr/local/bin
       cat << 'WRAPPER' > /usr/local/bin/google-chrome-canary
 #!/bin/bash
+if ! pgrep -f '/opt/google/chrome-canary/chrome' >/dev/null 2>&1; then
+  rm -f /root/.config/google-chrome-canary/Singleton* 2>/dev/null || true
+fi
 exec /usr/bin/google-chrome-canary --no-sandbox --disable-dev-shm-usage --disable-gpu --no-zygote \"\$@\"
 WRAPPER
       chmod +x /usr/local/bin/google-chrome-canary

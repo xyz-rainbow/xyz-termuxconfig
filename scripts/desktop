@@ -522,14 +522,15 @@ do_start() {
       export NO_AT_BRIDGE=1
       export GSK_RENDERER=cairo
       export GTK_A11Y=none
-      # Aceleración GPU (Virpipe sobre Vulkan / Adreno 650) y FPS configurados
-      export GALLIUM_DRIVER=virpipe
-      export MESA_GL_VERSION_OVERRIDE=4.3
-      export TU_DEBUG=noconform
+      # Renderizado OpenGL 4.5 (LLVM 19 NEON 128-bit) para Mutter 48 / Mesa 25
+      # Evita el crash SIGSEGV (signal 11) de libgallium/virpipe al mapear ventanas de Chrome/Electron
+      export LIBGL_ALWAYS_SOFTWARE=1
+      export GALLIUM_DRIVER=llvmpipe
       export CLUTTER_DEFAULT_FPS=${FPS_TARGET}
       export CLUTTER_VBLANK=none
 
       rm -rf /run/systemd/seats 2>/dev/null || true
+      rm -f /root/.config/google-chrome-canary/Singleton* 2>/dev/null || true
 
       dbus-uuidgen --ensure=/etc/machine-id 2>/dev/null || true
       mkdir -p /run/dbus /var/run/dbus
