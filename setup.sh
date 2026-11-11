@@ -563,7 +563,7 @@ install_distro_apps_modular() {
         curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --yes -o /usr/share/keyrings/microsoft.gpg
         echo 'deb [arch=arm64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list
         apt-get update -y && install_pkg code
-        sed -i 's|Exec=/usr/share/code/code|Exec=/usr/share/code/code --no-sandbox --disable-dev-shm-usage|g' /usr/share/applications/code.desktop 2>/dev/null || true
+        sed -i 's|Exec=/usr/share/code/code|Exec=/usr/share/code/code --no-sandbox --disable-dev-shm-usage --disable-gpu|g' /usr/share/applications/code.desktop 2>/dev/null || true
       fi
     fi
     if [[ \"\$IDES\" == *\"CURSOR\"* ]] && [[ \"\$DISTRO\" =~ ^(debian|ubuntu)$ ]]; then
@@ -571,14 +571,14 @@ install_distro_apps_modular() {
       curl -fsSL https://downloads.cursor.com/keys/anysphere.asc | gpg --dearmor --yes -o /usr/share/keyrings/cursor.gpg
       echo 'deb [arch=arm64 signed-by=/usr/share/keyrings/cursor.gpg] https://downloads.cursor.com/aptrepo stable main' > /etc/apt/sources.list.d/cursor.list
       apt-get update -y && install_pkg cursor
-      sed -i 's|Exec=/usr/share/cursor/cursor|Exec=/usr/share/cursor/cursor --no-sandbox --disable-dev-shm-usage|g' /usr/share/applications/cursor.desktop 2>/dev/null || true
+      sed -i 's|Exec=/usr/share/cursor/cursor|Exec=/usr/share/cursor/cursor --no-sandbox --disable-dev-shm-usage --disable-gpu|g' /usr/share/applications/cursor.desktop 2>/dev/null || true
     fi
     if [[ \"\$IDES\" == *\"VSCODIUM\"* ]] && [[ \"\$DISTRO\" =~ ^(debian|ubuntu)$ ]]; then
       echo '[*] Installing VSCodium ARM64...'
       curl -fsSL https://gitlab.com/paulcarroty/vscodium-deb-rpm-repo/raw/master/pub.gpg | gpg --dearmor --yes -o /usr/share/keyrings/vscodium.gpg
       echo 'deb [arch=arm64 signed-by=/usr/share/keyrings/vscodium.gpg] https://download.vscodium.com/debs vscodium main' > /etc/apt/sources.list.d/vscodium.list
       apt-get update -y && install_pkg codium
-      sed -i 's|Exec=/usr/share/codium/codium|Exec=/usr/share/codium/codium --no-sandbox --disable-dev-shm-usage|g' /usr/share/applications/codium.desktop 2>/dev/null || true
+      sed -i 's|Exec=/usr/share/codium/codium|Exec=/usr/share/codium/codium --no-sandbox --disable-dev-shm-usage --disable-gpu|g' /usr/share/applications/codium.desktop 2>/dev/null || true
     fi
     if [[ \"\$IDES\" == *\"NEOVIM\"* ]]; then
       echo '[*] Installing Neovim & GNOME Text Editor...'
@@ -591,7 +591,13 @@ install_distro_apps_modular() {
       curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor --yes -o /usr/share/keyrings/google-chrome.gpg
       echo 'deb [arch=arm64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome-canary.list
       apt-get update -y && install_pkg google-chrome-canary
-      sed -i 's|Exec=/usr/bin/google-chrome-canary|Exec=/usr/bin/google-chrome-canary --no-sandbox --disable-dev-shm-usage|g' /usr/share/applications/google-chrome-canary.desktop 2>/dev/null || true
+      mkdir -p /usr/local/bin
+      cat << 'WRAPPER' > /usr/local/bin/google-chrome-canary
+#!/bin/bash
+exec /usr/bin/google-chrome-canary --no-sandbox --disable-dev-shm-usage --disable-gpu --no-zygote \"\$@\"
+WRAPPER
+      chmod +x /usr/local/bin/google-chrome-canary
+      sed -i 's|Exec=/usr/bin/google-chrome-canary|Exec=/usr/local/bin/google-chrome-canary|g' /usr/share/applications/google-chrome-canary.desktop 2>/dev/null || true
     fi
     if [[ \"\$BROWSERS\" == *\"FIREFOX\"* ]]; then
       echo '[*] Installing Mozilla Firefox...'
@@ -600,13 +606,14 @@ install_distro_apps_modular() {
     if [[ \"\$BROWSERS\" == *\"CHROMIUM\"* ]]; then
       echo '[*] Installing Chromium...'
       install_pkg chromium || install_pkg chromium-browser || true
+      sed -i 's|Exec=chromium|Exec=chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-zygote|g' /usr/share/applications/chromium*.desktop 2>/dev/null || true
     fi
     if [[ \"\$BRAVE\" == *\"BRAVE\"* ]] && [[ \"\$DISTRO\" =~ ^(debian|ubuntu)$ ]]; then
       echo '[*] Installing Brave Browser ARM64...'
       curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
       echo 'deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=arm64] https://brave-browser-apt-release.s3.brave.com/ stable main' > /etc/apt/sources.list.d/brave-browser-release.list
       apt-get update -y && install_pkg brave-browser
-      sed -i 's|Exec=/usr/bin/brave-browser-stable|Exec=/usr/bin/brave-browser-stable --no-sandbox --disable-dev-shm-usage|g' /usr/share/applications/brave-browser.desktop 2>/dev/null || true
+      sed -i 's|Exec=/usr/bin/brave-browser-stable|Exec=/usr/bin/brave-browser-stable --no-sandbox --disable-dev-shm-usage --disable-gpu --no-zygote|g' /usr/share/applications/brave-browser.desktop 2>/dev/null || true
     fi
 
     # --- 3. Terminals ---
@@ -623,7 +630,8 @@ install_distro_apps_modular() {
         curl -fsSL \"\$VESK_URL\" -o /tmp/vesktop_arm64.deb
         DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/vesktop_arm64.deb
         rm -f /tmp/vesktop_arm64.deb
-        sed -i 's|Exec=vesktop|Exec=vesktop --no-sandbox --disable-dev-shm-usage|g' /usr/share/applications/vesktop.desktop 2>/dev/null || true
+        sed -i 's|Exec=/opt/Vesktop/vesktop|Exec=/opt/Vesktop/vesktop --no-sandbox --disable-dev-shm-usage --disable-gpu|g' /usr/share/applications/vesktop.desktop 2>/dev/null || true
+        sed -i 's|Exec=vesktop|Exec=vesktop --no-sandbox --disable-dev-shm-usage --disable-gpu|g' /usr/share/applications/vesktop.desktop 2>/dev/null || true
       fi
     fi
     [[ \"\$APPS\" == *\"EVINCE\"* ]]      && install_pkg evince
@@ -730,6 +738,12 @@ install_module_desktop() {
           for f in /usr/share/dbus-1/system-services/*udisks2* /usr/share/dbus-1/system-services/*colord*; do
             [ -e "$f" ] && mv "$f" /usr/share/dbus-1/system-services/disabled/ 2>/dev/null || true
           done
+
+          if [ -d /usr/share/glib-2.0/schemas ]; then
+            printf "[org.gnome.mutter:GNOME]\nexperimental-features=@as []\n" > /usr/share/glib-2.0/schemas/10_mutter-common.gschema.override
+            glib-compile-schemas /usr/share/glib-2.0/schemas 2>/dev/null || true
+          fi
+          printf "GSK_RENDERER=cairo\nGTK_A11Y=none\nNO_AT_BRIDGE=1\n" > /etc/environment
         '
         if [ -f "$REPO_DIR/config/debian/bwrap-shim.py" ]; then
           proot-distro login "$chosen_os" -- bash -c "dpkg-divert --add --rename --divert /usr/bin/bwrap.real /usr/bin/bwrap 2>/dev/null || true"

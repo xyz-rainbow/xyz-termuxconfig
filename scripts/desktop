@@ -277,14 +277,22 @@ apply_resolution() {
     # En Termux:X11 'scaled', displayScale = round(10000 / pct)
     local scale_val=$(( (10000 + pct / 2) / pct ))
     if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
-      termux-x11-preference "displayResolutionMode":"scaled" "displayScale":"${scale_val}" >/dev/null 2>&1 || true
+      termux-x11-preference \
+        "displayResolutionMode":"scaled" \
+        "displayScale":"${scale_val}" \
+        "adjustResolution":"true" \
+        "forceOrientation":"auto" >/dev/null 2>&1 || true
     fi
     [ "$silent" -eq 0 ] && echo "[OK] Resolución configurada al ${pct}% adaptable (se ajusta automáticamente a ventana partida o pantalla completa)."
   elif [[ "$res" =~ ^[0-9]{3,4}x[0-9]{3,4}$ ]]; then
     RES_TARGET="$res"
     save_conf
     if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
-      termux-x11-preference "displayResolutionMode":"custom" "displayResolutionCustom":"${res}" >/dev/null 2>&1 || true
+      termux-x11-preference \
+        "displayResolutionMode":"custom" \
+        "displayResolutionCustom":"${res}" \
+        "adjustResolution":"false" \
+        "forceOrientation":"auto" >/dev/null 2>&1 || true
     fi
     [ "$silent" -eq 0 ] && echo "[OK] Resolución fija configurada a ${res}."
   else
@@ -397,7 +405,8 @@ do_stop() {
   pkill -9 -f "gvfs" 2>/dev/null || true
   pkill -f "proot" 2>/dev/null || true
   pkill -f "virgl_test_server_android" 2>/dev/null || true
-  pkill -f "termux.x11" 2>/dev/null || true
+  pkill -f "com.termux.x11.Loader" 2>/dev/null || true
+  rm -f "${TMPDIR:-/tmp}/.X11-unix/X0" "/tmp/.X11-unix/X0" "/tmp/.X0-lock" 2>/dev/null || true
   am force-stop com.termux.x11 >/dev/null 2>&1 || true
   echo "Entorno gráfico cerrado. Memoria RAM y CPU liberadas."
 }
@@ -450,8 +459,10 @@ do_start() {
   virgl_test_server_android --angle-vulkan >/dev/null 2>&1 &
 
   echo "[3/4] Iniciando servidor gráfico Termux:X11 en :0..."
-  pkill -f "termux.x11" 2>/dev/null || true
-  export XDG_RUNTIME_DIR=${TMPDIR}
+  pkill -f "com.termux.x11.Loader" 2>/dev/null || true
+  rm -f "${TMPDIR:-/tmp}/.X11-unix/X0" "/tmp/.X11-unix/X0" "/tmp/.X0-lock" 2>/dev/null || true
+  mkdir -p -m 1777 "${TMPDIR:-/tmp}/.X11-unix"
+  export XDG_RUNTIME_DIR=${TMPDIR:-/tmp}
   termux-x11 :0 >/dev/null 2>&1 &
   sleep 2
 
@@ -463,22 +474,24 @@ do_start() {
       termux-x11-preference \
         "displayResolutionMode":"scaled" \
         "displayScale":"${scale_val}" \
+        "adjustResolution":"true" \
+        "forceOrientation":"auto" \
         "touchMode":"Direct touch" \
         "tapToMove":"true" \
         "showAdditionalKbd":"false" \
         "fullscreen":"true" \
-        "forceLandscape":"true" \
-        "capturePointerOnIntercept":"true" >/dev/null 2>&1 || true
+        "pointerCapture":"true" >/dev/null 2>&1 || true
     else
       termux-x11-preference \
         "displayResolutionMode":"custom" \
         "displayResolutionCustom":"${RES_TARGET}" \
+        "adjustResolution":"false" \
+        "forceOrientation":"auto" \
         "touchMode":"Direct touch" \
         "tapToMove":"true" \
         "showAdditionalKbd":"false" \
         "fullscreen":"true" \
-        "forceLandscape":"true" \
-        "capturePointerOnIntercept":"true" >/dev/null 2>&1 || true
+        "pointerCapture":"true" >/dev/null 2>&1 || true
     fi
   fi
 
@@ -507,6 +520,8 @@ do_start() {
       export GDK_BACKEND=x11
       export QT_QPA_PLATFORM=xcb
       export NO_AT_BRIDGE=1
+      export GSK_RENDERER=cairo
+      export GTK_A11Y=none
       # Aceleración GPU (Virpipe sobre Vulkan / Adreno 650) y FPS configurados
       export GALLIUM_DRIVER=virpipe
       export MESA_GL_VERSION_OVERRIDE=4.3
@@ -523,8 +538,8 @@ do_start() {
       export DBUS_SYSTEM_BUS_ADDRESS=\"unix:path=/run/dbus/system_bus_socket\"
       eval \$(dbus-launch --sh-syntax)
 
-      # 1. Modo Oscuro, Zoom, Fondos Oficiales y Rendimiento (sin doble escalado)
-      gsettings reset org.gnome.mutter experimental-features 2>/dev/null || true
+      # 1. Modo Oscuro, Zoom, Fondos Oficiales y Rendimiento (sin doble escalado ni crashes en X11)
+      gsettings set org.gnome.mutter experimental-features "[]" 2>/dev/null || true
       gsettings set org.gnome.desktop.search-providers disable-external true 2>/dev/null || true
       gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || true
       gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark' 2>/dev/null || true
