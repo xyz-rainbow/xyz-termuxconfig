@@ -439,7 +439,11 @@ do_start() {
   fi
 
   [ -n "$MODE_SET" ] && PERF_MODE="$MODE_SET"
-  [ -n "$FPS_SET" ] && apply_fps "$FPS_SET" || apply_fps "$FPS_TARGET" >/dev/null 2>&1 || true
+  if [ -n "$FPS_SET" ]; then
+    apply_fps "$FPS_SET"
+  else
+    (apply_fps "$FPS_TARGET" >/dev/null 2>&1 || true) &
+  fi
   [ -n "$RES_SET" ] && RES_TARGET="$RES_SET"
   [ -n "$ZOOM_SET" ] && ZOOM_TARGET="$ZOOM_SET"
   save_conf
@@ -464,38 +468,45 @@ do_start() {
   mkdir -p -m 1777 "${TMPDIR:-/tmp}/.X11-unix"
   export XDG_RUNTIME_DIR=${TMPDIR:-/tmp}
   termux-x11 :0 >/dev/null 2>&1 &
-  sleep 2
-
-  # Configurar preferencias de Termux:X11 (Resolución adaptable o fija)
-  if command -v termux-x11-preference >/dev/null 2>&1; then
-    if [[ "$RES_TARGET" =~ ^([0-9]{2,3})%?$ ]]; then
-      local pct="${BASH_REMATCH[1]}"
-      local scale_val=$(( (10000 + pct / 2) / pct ))
-      termux-x11-preference \
-        "displayResolutionMode":"scaled" \
-        "displayScale":"${scale_val}" \
-        "adjustResolution":"true" \
-        "forceOrientation":"auto" \
-        "touchMode":"Direct touch" \
-        "tapToMove":"true" \
-        "showAdditionalKbd":"false" \
-        "fullscreen":"true" \
-        "pointerCapture":"true" >/dev/null 2>&1 || true
-    else
-      termux-x11-preference \
-        "displayResolutionMode":"custom" \
-        "displayResolutionCustom":"${RES_TARGET}" \
-        "adjustResolution":"false" \
-        "forceOrientation":"auto" \
-        "touchMode":"Direct touch" \
-        "tapToMove":"true" \
-        "showAdditionalKbd":"false" \
-        "fullscreen":"true" \
-        "pointerCapture":"true" >/dev/null 2>&1 || true
-    fi
-  fi
-
   am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
+
+  # Esperar activamente al socket X0 (máx 5s) en vez de bloquear
+  for _ in $(seq 1 25); do
+    [ -S "${TMPDIR:-/tmp}/.X11-unix/X0" ] && break
+    sleep 0.2
+  done
+
+  # Configurar preferencias de Termux:X11 en segundo plano (con MainActivity ya activa)
+  if command -v termux-x11-preference >/dev/null 2>&1; then
+    (
+      sleep 1
+      if [[ "$RES_TARGET" =~ ^([0-9]{2,3})%?$ ]]; then
+        pct="${BASH_REMATCH[1]}"
+        scale_val=$(( (10000 + pct / 2) / pct ))
+        DISPLAY=:0 timeout 4 termux-x11-preference \
+          "displayResolutionMode":"scaled" \
+          "displayScale":"${scale_val}" \
+          "adjustResolution":"true" \
+          "forceOrientation":"auto" \
+          "touchMode":"Direct touch" \
+          "tapToMove":"true" \
+          "showAdditionalKbd":"false" \
+          "fullscreen":"true" \
+          "pointerCapture":"true" >/dev/null 2>&1 || true
+      else
+        DISPLAY=:0 timeout 4 termux-x11-preference \
+          "displayResolutionMode":"custom" \
+          "displayResolutionCustom":"${RES_TARGET}" \
+          "adjustResolution":"false" \
+          "forceOrientation":"auto" \
+          "touchMode":"Direct touch" \
+          "tapToMove":"true" \
+          "showAdditionalKbd":"false" \
+          "fullscreen":"true" \
+          "pointerCapture":"true" >/dev/null 2>&1 || true
+      fi
+    ) &
+  fi
 
   local anim_bool="true"
   [ "$PERF_MODE" = "fast" ] && anim_bool="false"
