@@ -1,0 +1,751 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -e
+
+# ==============================================================================
+# desktop — Gestor unificado de Debian 13 (Trixie) + GNOME 48 en Termux:X11
+# ==============================================================================
+
+CONF_FILE="$HOME/.config/scripts/desktop.conf"
+
+# Cargar configuración persistente o inicializar valores por defecto
+DISTRO_TARGET="debian"
+PAD6_KEYBOARD_FIX="false"
+FPS_TARGET="60"
+RES_TARGET="100%"
+ZOOM_TARGET="100"
+PERF_MODE="normal"
+
+if [ -f "$CONF_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$CONF_FILE"
+fi
+
+# Auto-detectar contenedor instalado si el configurado no existe
+if [ ! -d "$PREFIX/var/lib/proot-distro/containers/$DISTRO_TARGET" ]; then
+  for d in debian ubuntu fedora archlinux; do
+    if [ -d "$PREFIX/var/lib/proot-distro/containers/$d" ]; then
+      DISTRO_TARGET="$d"
+      break
+    fi
+  done
+fi
+
+save_conf() {
+  mkdir -p "$(dirname "$CONF_FILE")"
+  cat << EOF > "$CONF_FILE"
+DISTRO_TARGET="$DISTRO_TARGET"
+PAD6_KEYBOARD_FIX="$PAD6_KEYBOARD_FIX"
+FPS_TARGET="$FPS_TARGET"
+RES_TARGET="$RES_TARGET"
+ZOOM_TARGET="$ZOOM_TARGET"
+PERF_MODE="$PERF_MODE"
+EOF
+}
+
+# Guardar valores iniciales si no existía el archivo
+[ ! -f "$CONF_FILE" ] && save_conf
+
+ACTION=""
+MODE_SET=""
+FPS_SET=""
+RES_SET=""
+ZOOM_SET=""
+QUERY_FPS=0
+QUERY_RES=0
+QUERY_ZOOM=0
+
+show_help() {
+  cat << 'EOF'
+Uso: desktop [ACCIÓN] [OPCIONES]
+
+Acciones principales:
+  --start, -s                 Inicia GNOME 48 (si ya está abierto, abre Termux:X11 sin reiniciar)
+  --stop, -k                  Cierra GNOME 48, servidores X11/GPU y libera memoria RAM y CPU
+  --reboot, -r                Reinicia el escritorio desde cero (--stop seguido de --start)
+  --status                    Muestra el estado completo de GNOME, FPS, Resolución, Zoom y GPU
+  --help, -h                  Muestra esta ayuda general
+
+Opciones de Pantalla y Rendimiento (combinables con --start/--reboot o en vivo):
+  --fps [VALOR|help]          Consulta los FPS actuales o configura los FPS de GNOME y de la
+                              pantalla de la Xiaomi Pad 6.
+                              • Rango soportado: 30, 48, 50, 60 (por defecto), 90, 120, 144
+                              • Ejemplos: 'desktop --fps', 'desktop --fps 120', 'desktop --fps help'
+
+  --resolution, --res [VAL]   Consulta o configura la resolución de pantalla.
+                              • Porcentaje adaptable (se adapta solo a ventana partida/flotante):
+                                100% (por defecto, 2880x1800), 75% (~2160x1350), 67% (1920x1200), 50% (1440x900)
+                              • Resolución fija: ej. 1920x1200, 1600x1000, 1440x900
+                              • Ejemplos: 'desktop --resolution', 'desktop --res 100%', 'desktop --res help'
+
+  --zoom [VALOR|help]         Consulta o configura el zoom de la interfaz/texto (independiente
+                              de la resolución, ideal para ventana partida o pequeña).
+                              • Rango recomendado: 50 a 300 (100 = 100% normal, 200 = 200% doble)
+                              • Ejemplos: 'desktop --zoom', 'desktop --zoom 200', 'desktop --zoom 100'
+
+  --fast                      Modo ultra-rápido (desactiva animaciones de GNOME al instante)
+  --normal                    Modo estándar (animaciones fluidas activadas, por defecto)
+  --mode <fast|normal>        Alias para cambiar entre modo rápido y normal
+  --animations <on|off>       Alias para activar (on) o desactivar (off) las animaciones
+EOF
+}
+
+show_fps_help() {
+  cat << 'EOF'
+=== Ayuda de FPS (desktop --fps) ===
+La pantalla de tu Xiaomi Pad 6 soporta nativamente las siguientes tasas de refresco:
+  • 30   -> 30 FPS (Máximo ahorro de batería)
+  • 48   -> 48 FPS (Cine / 24p x2)
+  • 50   -> 50 FPS (PAL)
+  • 60   -> 60 FPS (Por defecto — equilibrio ideal de batería y fluidez)
+  • 90   -> 90 FPS (Alta fluidez con consumo moderado)
+  • 120  -> 120 FPS (Ultra fluido)
+  • 144  -> 144 FPS (Máxima tasa de refresco del panel Xiaomi Pad 6)
+
+Uso:
+  desktop --fps               Muestra a cuántos FPS va GNOME y la pantalla de la Pad 6
+  desktop --fps 120           Cambia a 120 FPS (en GNOME y en la pantalla física vía ADB)
+  desktop --start --fps 120   Inicia GNOME directamente a 120 FPS
+EOF
+}
+
+show_res_help() {
+  cat << 'EOF'
+=== Ayuda de Resolución (desktop --resolution / --res) ===
+Puedes usar un porcentaje adaptable (se ajusta automáticamente si pones ventana partida
+o ventana flotante en Android) o una resolución fija:
+  • 100%  -> 100% de la ventana actual (2880x1800 en pantalla completa, adaptable) [Por defecto]
+  • 75%   -> 75% de la ventana actual (~2160x1350 en pantalla completa, adaptable)
+  • 67%   -> 67% de la ventana actual (1920x1200 en pantalla completa, adaptable)
+  • 50%   -> 50% de la ventana actual (1440x900 en pantalla completa, adaptable)
+  • WxH   -> Resolución fija no adaptable (ej. 1920x1200, 1600x1000, 1280x800)
+
+Uso:
+  desktop --resolution        Muestra la resolución activa en GNOME
+  desktop --resolution 100%   Activa el 100% adaptable a ventana partida
+  desktop --res 67%           Activa el 67% (1920x1200 adaptable a ventana partida)
+EOF
+}
+
+show_zoom_help() {
+  cat << 'EOF'
+=== Ayuda de Zoom (desktop --zoom) ===
+Escala el tamaño de toda la interfaz, barra superior, menús, textos y puntero de GNOME
+de forma independiente a la resolución de pantalla (ideal para ventana partida o pequeña):
+  • 80    -> 80% (Más pequeño, cabe más contenido en pantalla)
+  • 100   -> 100% (Tamaño normal por defecto)
+  • 125   -> 125% (Un 25% más grande)
+  • 150   -> 150% (Un 50% más grande)
+  • 200   -> 200% (Doble de tamaño, ideal en ventana pequeña/partida)
+  • Rango admitido: 50 a 300
+
+Uso:
+  desktop --zoom              Muestra el nivel de zoom actual
+  desktop --zoom 200          Aplica zoom al 200% en vivo
+  desktop --zoom 100          Restaura el zoom al 100% normal
+EOF
+}
+
+suggest_flag() {
+  local bad_arg="$1"
+  python3 - "$bad_arg" << 'PYEOF'
+import sys, difflib
+
+bad = sys.argv[1]
+valid_flags = [
+    "--start", "--stop", "--reboot", "--status", "--help",
+    "--fps", "--resolution", "--res", "--zoom",
+    "--fast", "--normal", "--mode", "--animations"
+]
+
+norm = bad if bad.startswith("--") else ("--" + bad.lstrip("-"))
+matches = difflib.get_close_matches(norm, valid_flags, n=1, cutoff=0.45)
+
+print(f"\033[1;31m[!] Error:\033[0m La opción '{bad}' no existe.")
+if matches:
+    print(f"    ¿Querías decir \033[1;32m'desktop {matches[0]}'\033[0m?")
+print("    Usa \033[1;36m'desktop --help'\033[0m para ver todas las opciones disponibles.")
+PYEOF
+  exit 1
+}
+
+is_gnome_running() {
+  pgrep -f "gnome-shell" >/dev/null 2>&1 && pgrep -f "termux.x11" >/dev/null 2>&1
+}
+
+# Obtener los Hz físicos actuales de la pantalla de la Xiaomi Pad 6 vía ADB (si está conectado)
+get_pad6_display_hz() {
+  if command -v adb >/dev/null 2>&1; then
+    local dev
+    dev=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1; exit}')
+    if [ -n "$dev" ]; then
+      local hz
+      hz=$(adb -s "$dev" shell dumpsys display 2>/dev/null | sed -n 's/.*mActiveSfDisplayMode=DisplayMode{[^{}]*refreshRate=\([0-9.]*\).*/\1/p' | head -n1)
+      if [ -n "$hz" ]; then
+        printf "%.0f" "$hz"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+# Aplicar los FPS tanto en GNOME como en la pantalla física de la Xiaomi Pad 6
+apply_fps() {
+  local fps="$1"
+  case "$fps" in
+    30|48|50|60|90|120|144) ;;
+    help|-h|--help)
+      show_fps_help
+      exit 0
+      ;;
+    *)
+      echo -e "\033[1;31m[!] Error:\033[0m Valor de FPS '$fps' no válido."
+      echo "    Valores soportados por Xiaomi Pad 6: 30, 48, 50, 60 (por defecto), 90, 120, 144."
+      echo "    Usa 'desktop --fps help' para más información."
+      exit 1
+      ;;
+  esac
+
+  FPS_TARGET="$fps"
+  save_conf
+
+  echo "[*] Configurando objetivo de FPS a ${fps} FPS..."
+  if command -v adb >/dev/null 2>&1; then
+    local dev
+    dev=$(adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1; exit}')
+    if [ -n "$dev" ]; then
+      adb -s "$dev" shell settings put system user_refresh_rate "$fps" >/dev/null 2>&1 || true
+      adb -s "$dev" shell settings put system peak_refresh_rate "$fps" >/dev/null 2>&1 || true
+      adb -s "$dev" shell settings put system miui_refresh_rate "$fps" >/dev/null 2>&1 || true
+      adb -s "$dev" shell settings put system min_refresh_rate "$fps" >/dev/null 2>&1 || true
+      sleep 0.3
+      local real_hz
+      if real_hz=$(get_pad6_display_hz); then
+        echo "[OK] Pantalla física Xiaomi Pad 6 sincronizada a ${real_hz} Hz (GNOME objetivo: ${fps} FPS)."
+      else
+        echo "[OK] Ajustes enviados por ADB (GNOME objetivo: ${fps} FPS)."
+      fi
+    else
+      echo "[!] Aviso: ADB (Depuración Inalámbrica) no está conectado tras reinicio."
+      echo "    • GNOME usará ${fps} FPS internos, pero no se pudo cambiar automáticamente los Hz físicos de Android."
+      echo "    • Puedes cambiar los Hz en Ajustes de Android -> Pantalla -> Tasa de refresco o conectar ADB."
+    fi
+  fi
+}
+
+query_fps_status() {
+  local pad_hz
+  if ! is_gnome_running; then
+    echo 'Desktop not running, use "desktop --start" to proceed'
+    if pad_hz=$(get_pad6_display_hz); then
+      echo "  • FPS configurados para el próximo inicio: ${FPS_TARGET} FPS (Pantalla Xiaomi Pad 6 actual: ${pad_hz} Hz)"
+    else
+      echo "  • FPS configurados para el próximo inicio: ${FPS_TARGET} FPS (Pantalla Xiaomi Pad 6: sin conexión ADB para leer Hz)"
+    fi
+    return 0
+  fi
+
+  echo "=== Estado de FPS ==="
+  echo "  • GNOME 48 (Compositor) : ${FPS_TARGET} FPS"
+  if pad_hz=$(get_pad6_display_hz); then
+    echo "  • Pantalla Xiaomi Pad 6 : ${pad_hz} Hz (vía ADB)"
+  else
+    echo "  • Pantalla Xiaomi Pad 6 : No verificable (ADB desconectado)"
+  fi
+  echo "  (Rango soportado: 30, 48, 50, 60, 90, 120, 144 — usa 'desktop --fps <valor>' para cambiar)"
+}
+
+# Aplicar resolución en Termux:X11 (adaptable por porcentaje o fija WxH)
+apply_resolution() {
+  local res="$1"
+  local silent="${2:-0}"
+  case "$res" in
+    help|-h|--help)
+      show_res_help
+      exit 0
+      ;;
+  esac
+
+  if [[ "$res" =~ ^([0-9]{2,3})%?$ ]]; then
+    local pct="${BASH_REMATCH[1]}"
+    if [ "$pct" -lt 25 ] || [ "$pct" -gt 200 ]; then
+      echo -e "\033[1;31m[!] Error:\033[0m El porcentaje de resolución debe estar entre 25% y 200% (recomendado: 50% a 100%)."
+      exit 1
+    fi
+    RES_TARGET="${pct}%"
+    save_conf
+    # En Termux:X11 'scaled', displayScale = round(10000 / pct)
+    local scale_val=$(( (10000 + pct / 2) / pct ))
+    if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
+      termux-x11-preference "displayResolutionMode":"scaled" "displayScale":"${scale_val}" >/dev/null 2>&1 || true
+    fi
+    [ "$silent" -eq 0 ] && echo "[OK] Resolución configurada al ${pct}% adaptable (se ajusta automáticamente a ventana partida o pantalla completa)."
+  elif [[ "$res" =~ ^[0-9]{3,4}x[0-9]{3,4}$ ]]; then
+    RES_TARGET="$res"
+    save_conf
+    if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
+      termux-x11-preference "displayResolutionMode":"custom" "displayResolutionCustom":"${res}" >/dev/null 2>&1 || true
+    fi
+    [ "$silent" -eq 0 ] && echo "[OK] Resolución fija configurada a ${res}."
+  else
+    echo -e "\033[1;31m[!] Error:\033[0m Formato de resolución '$res' no válido."
+    echo "    Usa un porcentaje adaptable (ej. '100%', '75%', '67%', '50%') o ' ANCHOxALTO' (ej. '1920x1200')."
+    echo "    Ejecuta 'desktop --resolution help' para ver ejemplos."
+    exit 1
+  fi
+}
+
+query_res_status() {
+  if ! is_gnome_running; then
+    echo 'Desktop not running, use "desktop --start" to proceed'
+    echo "  • Resolución configurada para el próximo inicio: ${RES_TARGET} (Adaptable a ventana partida)"
+    return 0
+  fi
+
+  local cur_xrandr
+  cur_xrandr=$(proot-distro login "$DISTRO_TARGET" --shared-tmp -- bash -c 'DISPLAY=:0 xrandr 2>/dev/null | sed -n "s/.*current \([0-9]* x [0-9]*\).*/\1/p" | tr -d " "' 2>/dev/null || true)
+  echo "=== Estado de Resolución ==="
+  echo "  • Modo configurado : ${RES_TARGET} $( [[ "$RES_TARGET" == *%* ]] && echo '(Adaptable a ventana partida/flotante)' || echo '(Fija)' )"
+  [ -n "$cur_xrandr" ] && echo "  • Píxeles actuales : ${cur_xrandr} (en la ventana actual de Termux:X11)"
+}
+
+# Aplicar Zoom independiente de la resolución dentro de GNOME
+apply_zoom() {
+  local z="$1"
+  local silent="${2:-0}"
+  case "$z" in
+    help|-h|--help)
+      show_zoom_help
+      exit 0
+      ;;
+  esac
+
+  if [[ "$z" =~ ^([0-9]{2,3})%?$ ]]; then
+    local pct="${BASH_REMATCH[1]}"
+    if [ "$pct" -lt 50 ] || [ "$pct" -gt 300 ]; then
+      echo -e "\033[1;31m[!] Error:\033[0m El nivel de zoom debe estar entre 50 y 300 (100 = 100% normal, 200 = 200%)."
+      exit 1
+    fi
+    ZOOM_TARGET="$pct"
+    save_conf
+    local factor cursor_sz
+    factor=$(python3 -c "print(round($pct / 100.0, 2))")
+    cursor_sz=$(python3 -c "print(max(16, int(round(24 * ($pct / 100.0)))))")
+    if is_gnome_running; then
+      proot-distro login "$DISTRO_TARGET" --shared-tmp -- bash -c "
+        export DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-root
+        dbus-run-session -- bash -c '
+          gsettings set org.gnome.desktop.interface text-scaling-factor ${factor} 2>/dev/null || true
+          gsettings set org.gnome.desktop.interface cursor-size ${cursor_sz} 2>/dev/null || true
+        '
+      " >/dev/null 2>&1 || true
+    fi
+    [ "$silent" -eq 0 ] && echo "[OK] Zoom de interfaz configurado al ${pct}% (escala ${factor}x)."
+  else
+    echo -e "\033[1;31m[!] Error:\033[0m Valor de zoom '$z' no válido. Usa un número como 100 (normal), 150, 200 o 80."
+    echo "    Ejecuta 'desktop --zoom help' para más información."
+    exit 1
+  fi
+}
+
+query_zoom_status() {
+  if ! is_gnome_running; then
+    echo 'Desktop not running, use "desktop --start" to proceed'
+    echo "  • Zoom configurado para el próximo inicio: ${ZOOM_TARGET}%"
+    return 0
+  fi
+
+  echo "=== Estado de Zoom ==="
+  echo "  • Zoom de interfaz activo : ${ZOOM_TARGET}% (100% = normal)"
+  echo "  (Usa 'desktop --zoom <50..300>' para ampliarlo o reducirlo sin cambiar la resolución)"
+}
+
+apply_perf_mode_live() {
+  local mode="$1"
+  PERF_MODE="$mode"
+  save_conf
+  if [ "$mode" = "fast" ]; then
+    echo "[*] Aplicando modo FAST (animaciones desactivadas para respuesta instantánea)..."
+    if is_gnome_running; then
+      proot-distro login "$DISTRO_TARGET" --shared-tmp -- bash -c '
+        export DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-root
+        dbus-run-session -- gsettings set org.gnome.desktop.interface enable-animations false 2>/dev/null || true
+      ' >/dev/null 2>&1 || true
+    fi
+    echo "[OK] Modo FAST activado."
+  elif [ "$mode" = "normal" ]; then
+    echo "[*] Aplicando modo NORMAL (animaciones de GNOME activadas)..."
+    if is_gnome_running; then
+      proot-distro login "$DISTRO_TARGET" --shared-tmp -- bash -c '
+        export DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-root
+        dbus-run-session -- gsettings set org.gnome.desktop.interface enable-animations true 2>/dev/null || true
+      ' >/dev/null 2>&1 || true
+    fi
+    echo "[OK] Modo NORMAL activado."
+  fi
+}
+
+do_stop() {
+  echo "Deteniendo entorno gráfico GNOME y servidores X11/GPU..."
+  pkill -f "gnome-session" 2>/dev/null || true
+  pkill -f "gnome-shell" 2>/dev/null || true
+  pkill -f "mutter" 2>/dev/null || true
+  pkill -f "sxhkd" 2>/dev/null || true
+  pkill -9 -f "dbus-daemon" 2>/dev/null || true
+  pkill -9 -f "udisksd" 2>/dev/null || true
+  pkill -9 -f "localsearch" 2>/dev/null || true
+  pkill -9 -f "gvfs" 2>/dev/null || true
+  pkill -f "proot" 2>/dev/null || true
+  pkill -f "virgl_test_server_android" 2>/dev/null || true
+  pkill -f "termux.x11" 2>/dev/null || true
+  am force-stop com.termux.x11 >/dev/null 2>&1 || true
+  echo "Entorno gráfico cerrado. Memoria RAM y CPU liberadas."
+}
+
+do_status() {
+  if ! is_gnome_running; then
+    echo 'Desktop not running, use "desktop --start" to proceed'
+    echo "  • Configuración guardada: ${FPS_TARGET} FPS | Resolución: ${RES_TARGET} | Zoom: ${ZOOM_TARGET}% | Modo: ${PERF_MODE}"
+    return 0
+  fi
+  echo "=== Estado del Escritorio GNOME 48 ==="
+  echo "  • GNOME Shell 48 : ACTIVO (PID $(pgrep -f 'gnome-shell' | head -n1))"
+  echo "  • Modo Animación : ${PERF_MODE^^}"
+  query_fps_status
+  query_res_status
+  query_zoom_status
+}
+
+do_start() {
+  # Si GNOME ya está en ejecución, NO reiniciar: aplicar cambios en vivo si los hay y abrir Termux:X11
+  if is_gnome_running; then
+    echo "[i] GNOME 48 ya está en ejecución."
+    [ -n "$MODE_SET" ] && apply_perf_mode_live "$MODE_SET"
+    [ -n "$FPS_SET" ] && apply_fps "$FPS_SET"
+    [ -n "$RES_SET" ] && apply_resolution "$RES_SET" 0
+    [ -n "$ZOOM_SET" ] && apply_zoom "$ZOOM_SET" 0
+    echo "[i] Abriendo Termux:X11 sin reiniciar la sesión..."
+    am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
+    exit 0
+  fi
+
+  [ -n "$MODE_SET" ] && PERF_MODE="$MODE_SET"
+  [ -n "$FPS_SET" ] && apply_fps "$FPS_SET" || apply_fps "$FPS_TARGET" >/dev/null 2>&1 || true
+  [ -n "$RES_SET" ] && RES_TARGET="$RES_SET"
+  [ -n "$ZOOM_SET" ] && ZOOM_TARGET="$ZOOM_SET"
+  save_conf
+
+  # Limpiar cualquier proceso huérfano previo (evita bucles de CPU de dbus-daemon)
+  pkill -9 -f "dbus-daemon" 2>/dev/null || true
+  pkill -9 -f "udisksd" 2>/dev/null || true
+  pkill -9 -f "localsearch" 2>/dev/null || true
+
+  echo "[1/4] Iniciando servidor de audio (PulseAudio + Micrófono)..."
+  if ! pulseaudio --check 2>/dev/null; then
+    pulseaudio --start --exit-idle-time=-1
+  fi
+
+  echo "[2/4] Iniciando aceleración GPU Adreno 650 (VirGL Vulkan)..."
+  pkill -f virgl_test_server_android 2>/dev/null || true
+  virgl_test_server_android --angle-vulkan >/dev/null 2>&1 &
+
+  echo "[3/4] Iniciando servidor gráfico Termux:X11 en :0..."
+  pkill -f "termux.x11" 2>/dev/null || true
+  export XDG_RUNTIME_DIR=${TMPDIR}
+  termux-x11 :0 >/dev/null 2>&1 &
+  sleep 2
+
+  # Configurar preferencias de Termux:X11 (Resolución adaptable o fija)
+  if command -v termux-x11-preference >/dev/null 2>&1; then
+    if [[ "$RES_TARGET" =~ ^([0-9]{2,3})%?$ ]]; then
+      local pct="${BASH_REMATCH[1]}"
+      local scale_val=$(( (10000 + pct / 2) / pct ))
+      termux-x11-preference \
+        "displayResolutionMode":"scaled" \
+        "displayScale":"${scale_val}" \
+        "touchMode":"Direct touch" \
+        "tapToMove":"true" \
+        "showAdditionalKbd":"false" \
+        "fullscreen":"true" \
+        "forceLandscape":"true" \
+        "capturePointerOnIntercept":"true" >/dev/null 2>&1 || true
+    else
+      termux-x11-preference \
+        "displayResolutionMode":"custom" \
+        "displayResolutionCustom":"${RES_TARGET}" \
+        "touchMode":"Direct touch" \
+        "tapToMove":"true" \
+        "showAdditionalKbd":"false" \
+        "fullscreen":"true" \
+        "forceLandscape":"true" \
+        "capturePointerOnIntercept":"true" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
+
+  local anim_bool="true"
+  [ "$PERF_MODE" = "fast" ] && anim_bool="false"
+  local zoom_factor cursor_sz
+  zoom_factor=$(python3 -c "print(round(${ZOOM_TARGET%\%} / 100.0, 2))")
+  cursor_sz=$(python3 -c "print(max(16, int(round(24 * (${ZOOM_TARGET%\%} / 100.0)))))")
+
+  echo "[4/4] Lanzando Debian 13 + GNOME 48 [FPS: ${FPS_TARGET} | Res: ${RES_TARGET} | Zoom: ${ZOOM_TARGET}% | Modo: ${PERF_MODE}]..."
+  echo "      (Para cerrar: desktop --stop | Para reiniciar: desktop --reboot)"
+
+  proot-distro login "$DISTRO_TARGET" \
+    --shared-tmp \
+    --bind /dev/kgsl-3d0:/dev/kgsl-3d0 \
+    --bind /data/data/com.termux/files/home/projects:/root/projects \
+    -- bash -c "
+      export DISPLAY=:0
+      export PULSE_SERVER=127.0.0.1
+      export XDG_RUNTIME_DIR=/tmp/runtime-root
+      mkdir -p -m 0700 \"\$XDG_RUNTIME_DIR\"
+      export XDG_SESSION_TYPE=x11
+      export XDG_CURRENT_DESKTOP=GNOME
+      export GDK_BACKEND=x11
+      export QT_QPA_PLATFORM=xcb
+      export NO_AT_BRIDGE=1
+      # Aceleración GPU (Virpipe sobre Vulkan / Adreno 650) y FPS configurados
+      export GALLIUM_DRIVER=virpipe
+      export MESA_GL_VERSION_OVERRIDE=4.3
+      export TU_DEBUG=noconform
+      export CLUTTER_DEFAULT_FPS=${FPS_TARGET}
+      export CLUTTER_VBLANK=none
+
+      rm -rf /run/systemd/seats 2>/dev/null || true
+
+      dbus-uuidgen --ensure=/etc/machine-id 2>/dev/null || true
+      mkdir -p /run/dbus /var/run/dbus
+      rm -f /run/dbus/* /var/run/dbus/* 2>/dev/null || true
+      dbus-daemon --system --fork 2>/dev/null || true
+      export DBUS_SYSTEM_BUS_ADDRESS=\"unix:path=/run/dbus/system_bus_socket\"
+      eval \$(dbus-launch --sh-syntax)
+
+      # 1. Modo Oscuro, Zoom, Fondos Oficiales y Rendimiento (sin doble escalado)
+      gsettings reset org.gnome.mutter experimental-features 2>/dev/null || true
+      gsettings set org.gnome.desktop.search-providers disable-external true 2>/dev/null || true
+      gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || true
+      gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark' 2>/dev/null || true
+      gsettings set org.gnome.desktop.interface enable-animations ${anim_bool} 2>/dev/null || true
+      gsettings set org.gnome.desktop.interface text-scaling-factor ${zoom_factor} 2>/dev/null || true
+      gsettings set org.gnome.desktop.interface cursor-size ${cursor_sz} 2>/dev/null || true
+
+      cur_bg=\$(gsettings get org.gnome.desktop.background picture-uri-dark 2>/dev/null | tr -d \"'\")
+      if [ -z \"\$cur_bg\" ] || [[ \"\$cur_bg\" == *\"desktop-base\"* ]]; then
+        gsettings set org.gnome.desktop.background picture-uri 'file:///usr/share/backgrounds/gnome/adwaita-l.jpg' 2>/dev/null || true
+        gsettings set org.gnome.desktop.background picture-uri-dark 'file:///usr/share/backgrounds/gnome/adwaita-d.jpg' 2>/dev/null || true
+      fi
+
+      # 2. Touchpad y Puntero
+      gsettings set org.gnome.desktop.peripherals.touchpad tap-to-click true 2>/dev/null || true
+      gsettings set org.gnome.desktop.peripherals.touchpad two-finger-scrolling-enabled true 2>/dev/null || true
+      gsettings set org.gnome.desktop.peripherals.touchpad natural-scroll true 2>/dev/null || true
+      gsettings set org.gnome.desktop.peripherals.touchpad click-method 'fingers' 2>/dev/null || true
+      gsettings set org.gnome.desktop.peripherals.touchpad speed 0.25 2>/dev/null || true
+      gsettings set org.gnome.desktop.peripherals.mouse natural-scroll false 2>/dev/null || true
+      gsettings set org.gnome.desktop.peripherals.mouse accel-profile 'adaptive' 2>/dev/null || true
+
+      # 3. Mapear tecla física Esc (º / keycode 49) y F1-F12 si PAD6_KEYBOARD_FIX está activo
+      if [ "${PAD6_KEYBOARD_FIX}" = "true" ]; then
+        mkdir -p /root/.config/sxhkd
+        cat << 'SXHKD_EOF' > /root/.config/sxhkd/sxhkdrc
+ctrl + alt + {1,2,3,4,5,6,7,8,9,0,apostrophe,exclamdown}
+    xdotool key --clearmodifiers {F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12}
+SXHKD_EOF
+
+        (
+          sleep 3
+          setxkbmap es 2>/dev/null || true
+          xmodmap -e 'keycode 49 = Escape FeminineOrdinal backslash backslash' 2>/dev/null || true
+          sxhkd -c /root/.config/sxhkd/sxhkdrc >/dev/null 2>&1 &
+        ) &
+      fi
+
+      exec gnome-shell --x11
+    "
+}
+
+if [ $# -eq 0 ]; then
+  show_help
+  exit 0
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --start|-s)
+      ACTION="start"
+      shift
+      ;;
+    --stop|-k)
+      ACTION="stop"
+      shift
+      ;;
+    --reboot|--restart|-r)
+      ACTION="reboot"
+      shift
+      ;;
+    --status)
+      ACTION="status"
+      shift
+      ;;
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    --fast)
+      MODE_SET="fast"
+      shift
+      ;;
+    --normal)
+      MODE_SET="normal"
+      shift
+      ;;
+    --mode|-mode)
+      if [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+        echo "[!] Error: '$1' requiere un valor ('fast' o 'normal')."
+        exit 1
+      fi
+      case "$2" in
+        fast|off) MODE_SET="fast" ;;
+        normal|on|default) MODE_SET="normal" ;;
+        *) suggest_flag "--$2" ;;
+      esac
+      shift 2
+      ;;
+    --mode=*|-mode=*)
+      val="${1#*=}"
+      case "$val" in
+        fast|off) MODE_SET="fast" ;;
+        normal|on|default) MODE_SET="normal" ;;
+        *) suggest_flag "--$val" ;;
+      esac
+      shift
+      ;;
+    --animations)
+      if [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+        echo "[!] Error: '--animations' requiere 'on' o 'off'."
+        exit 1
+      fi
+      case "$2" in
+        off|false|0) MODE_SET="fast" ;;
+        on|true|1) MODE_SET="normal" ;;
+        *) suggest_flag "--$2" ;;
+      esac
+      shift 2
+      ;;
+    --animations=*)
+      val="${1#*=}"
+      case "$val" in
+        off|false|0) MODE_SET="fast" ;;
+        on|true|1) MODE_SET="normal" ;;
+        *) suggest_flag "--$val" ;;
+      esac
+      shift
+      ;;
+    --fps)
+      if [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+        QUERY_FPS=1
+        shift
+      else
+        FPS_SET="$2"
+        shift 2
+      fi
+      ;;
+    --fps=*)
+      FPS_SET="${1#*=}"
+      shift
+      ;;
+    --resolution|--res)
+      if [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+        QUERY_RES=1
+        shift
+      else
+        RES_SET="$2"
+        shift 2
+      fi
+      ;;
+    --resolution=*|--res=*)
+      RES_SET="${1#*=}"
+      shift
+      ;;
+    --zoom)
+      if [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+        QUERY_ZOOM=1
+        shift
+      else
+        ZOOM_SET="$2"
+        shift 2
+      fi
+      ;;
+    --zoom=*)
+      ZOOM_SET="${1#*=}"
+      shift
+      ;;
+    *)
+      suggest_flag "$1"
+      ;;
+  esac
+done
+
+# Ejecutar según acción o consultas/ajustes individuales
+case "$ACTION" in
+  start)
+    do_start
+    ;;
+  stop)
+    do_stop
+    ;;
+  reboot)
+    do_stop
+    sleep 1
+    do_start
+    ;;
+  status)
+    do_status
+    ;;
+  "")
+    did_something=0
+    if [ -n "$MODE_SET" ]; then
+      apply_perf_mode_live "$MODE_SET"
+      did_something=1
+    fi
+    if [ -n "$FPS_SET" ]; then
+      apply_fps "$FPS_SET"
+      if ! is_gnome_running; then
+        echo '    (Nota: Desktop not running, use "desktop --start" to proceed with these FPS)'
+      fi
+      did_something=1
+    fi
+    if [ -n "$RES_SET" ]; then
+      apply_resolution "$RES_SET" 0
+      if ! is_gnome_running; then
+        echo '    (Nota: Desktop not running, use "desktop --start" to proceed with this resolution)'
+      fi
+      did_something=1
+    fi
+    if [ -n "$ZOOM_SET" ]; then
+      apply_zoom "$ZOOM_SET" 0
+      if ! is_gnome_running; then
+        echo '    (Nota: Desktop not running, use "desktop --start" to proceed with this zoom)'
+      fi
+      did_something=1
+    fi
+    if [ "$QUERY_FPS" -eq 1 ]; then
+      query_fps_status
+      did_something=1
+    fi
+    if [ "$QUERY_RES" -eq 1 ]; then
+      query_res_status
+      did_something=1
+    fi
+    if [ "$QUERY_ZOOM" -eq 1 ]; then
+      query_zoom_status
+      did_something=1
+    fi
+    if [ "$did_something" -eq 0 ]; then
+      show_help
+    fi
+    ;;
+esac

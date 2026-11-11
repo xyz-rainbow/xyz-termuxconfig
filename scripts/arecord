@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+if ! pulseaudio --check 2>/dev/null; then
+  pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
+fi
+exec /data/data/com.termux/files/usr/bin/arecord "$@"

@@ -1,0 +1,26 @@
+# Termux Environment Rules (Android / ARM64 / Non-Root)
+
+- **Environment**: Termux on Android (`aarch64` / ARM64), Xiaomi Pad 6, **non-root**.
+- **Filesystem & Paths**:
+  - `$HOME`: `/data/data/com.termux/files/home`
+  - `$PREFIX`: `/data/data/com.termux/files/usr`
+  - Standard Linux paths like `/usr/bin`, `/bin`, `/etc`, or `/tmp` do not work as on desktop Linux; always use `$PREFIX/bin`, `$PREFIX/etc`, `$PREFIX/tmp` (or `$TMPDIR`), or `#!/usr/bin/env <cmd>` in shebangs.
+- **Permissions & Packages**:
+  - **Never use `sudo` or `su`** (device is not rooted).
+  - Use `pkg install <package>` (or `apt` without `sudo`) to install system packages.
+  - Native binaries compiled for `x86_64` or standard `glibc` Linux will not run directly (Termux uses `bionic` libc on `aarch64`). Prefer Termux repository packages (`pkg`) before compiling native extensions via `pip` or `npm`.
+- **Workspaces**:
+  - Prefer dedicated project directories under `~/projects/` rather than working directly in `$HOME`.
+- **Research & Alignment First (`/grill-me` by Default)**:
+  - When context is limited or prior investigation can provide useful facts, root causes, or better alternatives, **investigate first** before proposing solutions.
+  - Whenever multiple options, unstated preferences, or ambiguities exist, **never decide unilaterally**—present the findings and ask the user via `ask_question` (one question at a time with a recommended option) before acting.
+  - Formulate all persistent rules concisely and generally so they apply broadly across situations rather than being tied to narrow examples.
+- **Parallelism & Time Efficiency**:
+  - Maximize multitasking by overlapping long-running operations, background tasks, or research with independent work or user alignment questions (`ask_question`) in the same turn to avoid idle waits.
+- **Hygiene, Structure & Documentation**:
+  - Always place files in their proper directories (`~/.config/` for configurations and environment scripts with symlinks in `~/.local/bin/` for executables, `~/projects/` strictly for software development projects, and `$TMPDIR` for temporary data).
+  - Immediately remove temporary files, build leftovers, and package caches (`pkg clean`, `apt-get clean`) upon completing operations.
+  - Document custom scripts, configurations, and setups with concise `README.md` files or inline comments where appropriate.
+- **Persistent Notes & Pending Tasks (`~/.config/notes/`)**:
+  - At the beginning of every session, check `~/.config/notes/` for pending tasks, reminders, or follow-ups, and address or update them when conditions are met.
+  - Prefer recording deferred or one-time follow-up actions in `~/.config/notes/pending.md` rather than creating single-use wrapper scripts that clutter the environment.

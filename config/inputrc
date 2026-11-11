@@ -1,0 +1,6 @@
+set meta-flag on
+set input-meta on
+set output-meta on
+set convert-meta off
+# Mapear la tecla física Esc de la Xiaomi Pad 6 ('º') a Escape real en Readline/Bash
+"º": "\e"

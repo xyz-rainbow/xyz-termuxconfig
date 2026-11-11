@@ -1,0 +1,257 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -e
+
+# ==============================================================================
+# pad-adb — Automated Wireless ADB & System Optimizer for Xiaomi Pad 6 (Termux)
+# ==============================================================================
+
+show_help() {
+  cat << 'EOF'
+Usage: pad-adb [OPTION] [ARGUMENTS]
+
+Core Options:
+  --start [PORT]              Start ADB server, auto-connect to local Wireless Debugging
+                              (or specified PORT), and apply Phantom Process Killer fixes
+  --stop                      Disconnect all ADB sessions and stop the ADB daemon
+  --pair <PAIRCODE> [PORT]    Pair with Android Wireless Debugging using your 6-digit code
+                              (auto-detects the pairing port if omitted)
+  --status                    Display active ADB connection, Phantom Process limit, and Hz
+  --optimize                  Apply Phantom Process Killer bypass, battery whitelist, and
+                              optional safe Xiaomi telemetry debloat
+  --help, -h                  Show this help message
+
+Examples:
+  pad-adb --pair 218742             # Auto-detect pairing port and pair with code 218742
+  pad-adb --pair 218742 39123       # Pair using explicit port 39123
+  pad-adb --start                   # Auto-connect and apply system optimizations
+  pad-adb --status                  # Verify connection and system parameters
+  pad-adb --stop                    # Stop ADB server cleanly
+EOF
+}
+
+suggest_flag() {
+  local bad_arg="$1"
+  python3 - "$bad_arg" << 'PYEOF'
+import sys, difflib
+
+bad = sys.argv[1]
+valid_flags = ["--start", "--stop", "--pair", "--status", "--optimize", "--help"]
+norm = bad if bad.startswith("--") else ("--" + bad.lstrip("-"))
+matches = difflib.get_close_matches(norm, valid_flags, n=1, cutoff=0.45)
+
+print(f"\033[1;31m[!] Error:\033[0m Unknown option '{bad}'.")
+if matches:
+    print(f"    Did you mean \033[1;32m'pad-adb {matches[0]}'\033[0m?")
+print("    Run \033[1;36m'pad-adb --help'\033[0m to see all valid options.")
+PYEOF
+  exit 1
+}
+
+get_connected_device() {
+  adb devices 2>/dev/null | awk 'NR>1 && $2=="device" {print $1; exit}'
+}
+
+# Auto-discover open local ports on 127.0.0.1 in the Android ephemeral range (30000-49999)
+discover_ports() {
+  local mode="$1" # "pair" or "connect"
+  # 1. Try adb mdns services first
+  local mdns_port=""
+  if [ "$mode" = "pair" ]; then
+    mdns_port=$(adb mdns services 2>/dev/null | awk '/_adb-tls-pairing\._tcp/ {split($3,a,":"); print a[2]; exit}')
+  else
+    mdns_port=$(adb mdns services 2>/dev/null | awk '/_adb-tls-connect\._tcp/ {split($3,a,":"); print a[2]; exit}')
+  fi
+  if [ -n "$mdns_port" ]; then
+    echo "$mdns_port"
+    return 0
+  fi
+
+  # 2. Fallback: scan listening TCP sockets in /proc/net/tcp & /proc/net/tcp6 if readable, or prompt
+  python3 - << 'PYEOF'
+import socket
+
+# Check common saved port or scan active local loopback ports if accessible
+found = []
+try:
+    with open("/proc/net/tcp6") as f:
+        for line in f.readlines()[1:]:
+            parts = line.split()
+            if len(parts) > 3 and parts[3] == "0A": # LISTEN
+                port = int(parts[1].split(":")[1], 16)
+                if 30000 <= port <= 49999:
+                    found.append(port)
+except Exception:
+    pass
+
+for p in sorted(set(found)):
+    print(p)
+PYEOF
+}
+
+apply_core_optimizations() {
+  local dev="$1"
+  echo "[*] Applying Android 14 / HyperOS Phantom Process Killer bypass..."
+  adb -s "$dev" shell "/system/bin/device_config set_sync_disabled_for_tests persistent" >/dev/null 2>&1 || true
+  adb -s "$dev" shell "/system/bin/device_config put activity_manager max_phantom_processes 2147483647" >/dev/null 2>&1 || true
+  adb -s "$dev" shell "settings put global settings_enable_monitor_phantom_procs false" >/dev/null 2>&1 || true
+
+  echo "[*] Adding Termux & Termux:X11 to Android Doze battery whitelist..."
+  adb -s "$dev" shell "dumpsys deviceidle whitelist +com.termux" >/dev/null 2>&1 || true
+  adb -s "$dev" shell "dumpsys deviceidle whitelist +com.termux.x11" >/dev/null 2>&1 || true
+  echo "[OK] Core system protections applied."
+}
+
+do_pair() {
+  local code="$1"
+  local port="$2"
+
+  if [ -z "$code" ] || [[ "$code" == -* ]]; then
+    echo -e "\033[1;31m[!] Error:\033[0m Missing 6-digit pairing code."
+    echo "    Usage: pad-adb --pair <PAIRCODE> [PORT]"
+    exit 1
+  fi
+
+  adb start-server >/dev/null 2>&1 || true
+
+  if [ -z "$port" ]; then
+    echo "[*] Searching for active Wireless Debugging pairing port..."
+    port=$(discover_ports "pair" | head -n1)
+  fi
+
+  if [ -z "$port" ]; then
+    read -r -p "[?] Could not auto-detect pairing port. Enter the Pairing Port shown in Settings: " port
+  fi
+
+  if [ -z "$port" ]; then
+    echo -e "\033[1;31m[!] Error:\033[0m Pairing port is required."
+    exit 1
+  fi
+
+  echo "[*] Pairing with 127.0.0.1:${port} using code ${code}..."
+  adb pair "127.0.0.1:${port}" "$code"
+  echo "[OK] Pairing complete! Now run 'pad-adb --start [CONNECT_PORT]' to connect."
+}
+
+do_start() {
+  local port="$1"
+  echo "[*] Starting ADB daemon..."
+  adb start-server >/dev/null 2>&1 || true
+
+  local dev
+  dev=$(get_connected_device)
+  if [ -n "$dev" ]; then
+    echo "[OK] Already connected to ADB device: ${dev}"
+    apply_core_optimizations "$dev"
+    exit 0
+  fi
+
+  # Try persistent port 5555 first if previously enabled
+  if [ -z "$port" ]; then
+    adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
+    sleep 0.5
+    dev=$(get_connected_device)
+    if [ -n "$dev" ]; then
+      echo "[OK] Connected via persistent local ADB port (127.0.0.1:5555)."
+      apply_core_optimizations "$dev"
+      exit 0
+    fi
+  fi
+
+  if [ -z "$port" ]; then
+    echo "[*] Auto-detecting Wireless Debugging connection port..."
+    port=$(discover_ports "connect" | head -n1)
+  fi
+
+  if [ -z "$port" ]; then
+    read -r -p "[?] Enter the Wireless Debugging IP Port (e.g. 35861): " port
+  fi
+
+  if [ -z "$port" ]; then
+    echo -e "\033[1;31m[!] Error:\033[0m Connection port is required."
+    exit 1
+  fi
+
+  echo "[*] Connecting to 127.0.0.1:${port}..."
+  adb connect "127.0.0.1:${port}"
+  sleep 1
+  dev=$(get_connected_device)
+  if [ -z "$dev" ]; then
+    echo -e "\033[1;31m[!] Error:\033[0m Failed to authenticate with 127.0.0.1:${port}."
+    echo "    Ensure Wireless Debugging is ON, or pair first using: pad-adb --pair <PAIRCODE> [PAIR_PORT]"
+    exit 1
+  fi
+
+  echo "[OK] Successfully connected to ${dev}."
+  # Enable port 5555 for easier future reconnects until next reboot
+  adb -s "$dev" tcpip 5555 >/dev/null 2>&1 || true
+  adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
+  dev=$(get_connected_device)
+  apply_core_optimizations "${dev:-127.0.0.1:5555}"
+}
+
+do_stop() {
+  echo "[*] Disconnecting ADB sessions and stopping server..."
+  adb disconnect >/dev/null 2>&1 || true
+  adb kill-server >/dev/null 2>&1 || true
+  echo "[OK] ADB server stopped."
+}
+
+do_status() {
+  echo "=== Xiaomi Pad 6 ADB Status ==="
+  local dev
+  dev=$(get_connected_device)
+  if [ -z "$dev" ]; then
+    echo "  • Connection Status      : DISCONNECTED"
+    echo "  • Hint                   : Run 'pad-adb --start [PORT]' to connect."
+    return 0
+  fi
+
+  local max_procs hz
+  max_procs=$(adb -s "$dev" shell "/system/bin/device_config get activity_manager max_phantom_processes" 2>/dev/null | tr -d '\r')
+  hz=$(adb -s "$dev" shell dumpsys display 2>/dev/null | sed -n 's/.*mActiveSfDisplayMode=DisplayMode{[^{}]*refreshRate=\([0-9.]*\).*/\1/p' | head -n1)
+
+  echo "  • Connection Status      : CONNECTED (${dev})"
+  echo "  • Max Phantom Processes  : ${max_procs:-unknown}"
+  [ -n "$hz" ] && printf "  • Display Refresh Rate   : %.0f Hz\n" "$hz"
+}
+
+do_optimize() {
+  local dev
+  dev=$(get_connected_device)
+  if [ -z "$dev" ]; then
+    echo -e "\033[1;31m[!] Error:\033[0m ADB is not connected. Run 'pad-adb --start' first."
+    exit 1
+  fi
+  apply_core_optimizations "$dev"
+
+  echo "[OK] Core Android 14+ optimizations applied (Phantom Process Killer disabled, Doze whitelisted)."
+}
+
+if [ $# -eq 0 ]; then
+  show_help
+  exit 0
+fi
+
+case "$1" in
+  --start|-s)
+    do_start "${2:-}"
+    ;;
+  --stop|-k)
+    do_stop
+    ;;
+  --pair|-p)
+    do_pair "${2:-}" "${3:-}"
+    ;;
+  --status)
+    do_status
+    ;;
+  --optimize)
+    do_optimize
+    ;;
+  --help|-h)
+    show_help
+    ;;
+  *)
+    suggest_flag "$1"
+    ;;
+esac
