@@ -104,3 +104,26 @@ You can run individual modules directly without touching or resetting the rest o
 # Show all available flags
 ./setup.sh --help
 ```
+
+---
+
+## `desktop` CLI Reference (GNOME 48 + Termux:X11 Manager)
+
+```bash
+desktop --start              # Start GNOME 48 (or focus Termux:X11 if already running)
+desktop --stop               # Stop GNOME 48, X11, and background services cleanly
+desktop --reboot             # Restart the desktop session
+desktop --status             # Show active status, FPS/Hz, resolution, orientation, and zoom
+
+# Orientation control (live or combined with --start)
+desktop --landscape          # Force horizontal (16:10) mode (default)
+desktop --vertical           # Force vertical/portrait (10:16) mode
+desktop --auto               # Automatic orientation following Android window/sensor
+desktop --orientation        # Query current orientation
+
+# Display & performance tuning (live or combined with --start)
+desktop --fps 120            # Sync GNOME & physical display refresh rate (30, 48, 50, 60, 90, 120, 144)
+desktop --res 100%           # Adaptive resolution for floating/split windows (100%, 75%, 67%, 50%, or WxH)
+desktop --zoom 150           # Scale UI/text/cursor independently of resolution (50..300)
+desktop --fast               # Disable animations for instant UI response (--normal to re-enable)
+```
