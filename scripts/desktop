@@ -405,6 +405,7 @@ do_stop() {
   pkill -9 -f "gvfs" 2>/dev/null || true
   pkill -f "proot" 2>/dev/null || true
   pkill -f "virgl_test_server_android" 2>/dev/null || true
+  pkill -9 -f "^termux-x11 " 2>/dev/null || true
   pkill -f "com.termux.x11.Loader" 2>/dev/null || true
   rm -f "${TMPDIR:-/tmp}/.X11-unix/X0" "/tmp/.X11-unix/X0" "/tmp/.X0-lock" 2>/dev/null || true
   am force-stop com.termux.x11 >/dev/null 2>&1 || true
@@ -463,6 +464,7 @@ do_start() {
   virgl_test_server_android --angle-vulkan >/dev/null 2>&1 &
 
   echo "[3/4] Iniciando servidor gráfico Termux:X11 en :0..."
+  pkill -9 -f "^termux-x11 " 2>/dev/null || true
   pkill -f "com.termux.x11.Loader" 2>/dev/null || true
   rm -f "${TMPDIR:-/tmp}/.X11-unix/X0" "/tmp/.X11-unix/X0" "/tmp/.X0-lock" 2>/dev/null || true
   mkdir -p -m 1777 "${TMPDIR:-/tmp}/.X11-unix"
