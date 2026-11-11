@@ -14,11 +14,13 @@ FPS_TARGET="60"
 RES_TARGET="100%"
 ZOOM_TARGET="100"
 PERF_MODE="normal"
+ORIENTATION_TARGET="landscape"
 
 if [ -f "$CONF_FILE" ]; then
   # shellcheck disable=SC1090
   source "$CONF_FILE"
 fi
+[ -z "${ORIENTATION_TARGET:-}" ] && ORIENTATION_TARGET="landscape"
 
 # Auto-detectar contenedor instalado si el configurado no existe
 if [ ! -d "$PREFIX/var/lib/proot-distro/containers/$DISTRO_TARGET" ]; then
@@ -39,6 +41,7 @@ FPS_TARGET="$FPS_TARGET"
 RES_TARGET="$RES_TARGET"
 ZOOM_TARGET="$ZOOM_TARGET"
 PERF_MODE="$PERF_MODE"
+ORIENTATION_TARGET="$ORIENTATION_TARGET"
 EOF
 }
 
@@ -50,9 +53,11 @@ MODE_SET=""
 FPS_SET=""
 RES_SET=""
 ZOOM_SET=""
+ORIENT_SET=""
 QUERY_FPS=0
 QUERY_RES=0
 QUERY_ZOOM=0
+QUERY_ORIENT=0
 
 show_help() {
   cat << 'EOF'
@@ -81,6 +86,11 @@ Opciones de Pantalla y Rendimiento (combinables con --start/--reboot o en vivo):
                               de la resolución, ideal para ventana partida o pequeña).
                               • Rango recomendado: 50 a 300 (100 = 100% normal, 200 = 200% doble)
                               • Ejemplos: 'desktop --zoom', 'desktop --zoom 200', 'desktop --zoom 100'
+
+  --landscape, --horizontal   Fija la orientación de Termux:X11 en horizontal (por defecto)
+  --portrait, --vertical      Fija la orientación de Termux:X11 en vertical
+  --auto                      Orientación automática según el sensor/ventana de Android
+  --orientation [VAL|help]    Consulta o cambia la orientación (landscape, portrait/vertical, auto)
 
   --fast                      Modo ultra-rápido (desactiva animaciones de GNOME al instante)
   --normal                    Modo estándar (animaciones fluidas activadas, por defecto)
@@ -145,6 +155,23 @@ Uso:
 EOF
 }
 
+show_orient_help() {
+  cat << 'EOF'
+=== Ayuda de Orientación (desktop --orientation / --landscape / --vertical / --auto) ===
+Controla la orientación de la ventana de Termux:X11 en la Xiaomi Pad 6:
+  • landscape / horizontal -> Modo horizontal (16:10, ideal para escritorio y ventana flotante horizontal)
+  • portrait / vertical    -> Modo vertical (10:16, ideal para lectura o ventana flotante vertical)
+  • auto                   -> Automático según el giro de la tablet o gestor de ventanas de Android
+
+Uso:
+  desktop --landscape             Cambia a modo horizontal en vivo
+  desktop --vertical              Cambia a modo vertical (portrait) en vivo
+  desktop --auto                  Cambia a orientación automática en vivo
+  desktop --orientation           Muestra la orientación activa actual
+  desktop --start --landscape     Inicia GNOME directamente en horizontal
+EOF
+}
+
 suggest_flag() {
   local bad_arg="$1"
   python3 - "$bad_arg" << 'PYEOF'
@@ -154,6 +181,7 @@ bad = sys.argv[1]
 valid_flags = [
     "--start", "--stop", "--reboot", "--status", "--help",
     "--fps", "--resolution", "--res", "--zoom",
+    "--landscape", "--horizontal", "--portrait", "--vertical", "--auto", "--orientation",
     "--fast", "--normal", "--mode", "--animations"
 ]
 
@@ -277,22 +305,24 @@ apply_resolution() {
     # En Termux:X11 'scaled', displayScale = round(10000 / pct)
     local scale_val=$(( (10000 + pct / 2) / pct ))
     if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
-      termux-x11-preference \
+      DISPLAY=:0 termux-x11-preference \
         "displayResolutionMode":"scaled" \
         "displayScale":"${scale_val}" \
         "adjustResolution":"true" \
-        "forceOrientation":"auto" >/dev/null 2>&1 || true
+        "forceOrientation":"${ORIENTATION_TARGET}" \
+        "fullscreen":"false" >/dev/null 2>&1 || true
     fi
-    [ "$silent" -eq 0 ] && echo "[OK] Resolución configurada al ${pct}% adaptable (se ajusta automáticamente a ventana partida o pantalla completa)."
+    [ "$silent" -eq 0 ] && echo "[OK] Resolución configurada al ${pct}% adaptable (se ajusta automáticamente a ventana flotante/partida o pantalla completa)."
   elif [[ "$res" =~ ^[0-9]{3,4}x[0-9]{3,4}$ ]]; then
     RES_TARGET="$res"
     save_conf
     if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
-      termux-x11-preference \
+      DISPLAY=:0 termux-x11-preference \
         "displayResolutionMode":"custom" \
         "displayResolutionCustom":"${res}" \
         "adjustResolution":"false" \
-        "forceOrientation":"auto" >/dev/null 2>&1 || true
+        "forceOrientation":"${ORIENTATION_TARGET}" \
+        "fullscreen":"false" >/dev/null 2>&1 || true
     fi
     [ "$silent" -eq 0 ] && echo "[OK] Resolución fija configurada a ${res}."
   else
@@ -301,6 +331,54 @@ apply_resolution() {
     echo "    Ejecuta 'desktop --resolution help' para ver ejemplos."
     exit 1
   fi
+}
+
+# Aplicar orientación en Termux:X11 (landscape, portrait/vertical, auto)
+apply_orientation() {
+  local ori="$1"
+  local silent="${2:-0}"
+  case "${ori,,}" in
+    help|-h|--help)
+      show_orient_help
+      exit 0
+      ;;
+    landscape|horizontal|land|h)
+      ORIENTATION_TARGET="landscape"
+      ;;
+    portrait|vertical|port|v)
+      ORIENTATION_TARGET="portrait"
+      ;;
+    auto|sensor|dynamic)
+      ORIENTATION_TARGET="auto"
+      ;;
+    *)
+      echo -e "\033[1;31m[!] Error:\033[0m Orientación '$ori' no válida."
+      echo "    Valores soportados: landscape (horizontal), portrait (vertical), auto."
+      echo "    Ejecuta 'desktop --orientation help' para más información."
+      exit 1
+      ;;
+  esac
+
+  save_conf
+  if is_gnome_running && command -v termux-x11-preference >/dev/null 2>&1; then
+    local adj_val="true"
+    [[ "$RES_TARGET" != *%* ]] && adj_val="false"
+    DISPLAY=:0 termux-x11-preference \
+      "forceOrientation":"${ORIENTATION_TARGET}" \
+      "adjustResolution":"${adj_val}" \
+      "fullscreen":"false" >/dev/null 2>&1 || true
+  fi
+  [ "$silent" -eq 0 ] && echo "[OK] Orientación de Termux:X11 configurada en '${ORIENTATION_TARGET}'."
+}
+
+query_orient_status() {
+  if ! is_gnome_running; then
+    echo 'Desktop not running, use "desktop --start" to proceed'
+    echo "  • Orientación configurada para el próximo inicio: ${ORIENTATION_TARGET}"
+    return 0
+  fi
+  echo "=== Estado de Orientación ==="
+  echo "  • Orientación activa : ${ORIENTATION_TARGET} (Usa --landscape, --vertical o --auto para cambiar)"
 }
 
 query_res_status() {
@@ -415,7 +493,7 @@ do_stop() {
 do_status() {
   if ! is_gnome_running; then
     echo 'Desktop not running, use "desktop --start" to proceed'
-    echo "  • Configuración guardada: ${FPS_TARGET} FPS | Resolución: ${RES_TARGET} | Zoom: ${ZOOM_TARGET}% | Modo: ${PERF_MODE}"
+    echo "  • Configuración guardada: ${FPS_TARGET} FPS | Resolución: ${RES_TARGET} | Orientación: ${ORIENTATION_TARGET} | Zoom: ${ZOOM_TARGET}% | Modo: ${PERF_MODE}"
     return 0
   fi
   echo "=== Estado del Escritorio GNOME 48 ==="
@@ -423,6 +501,7 @@ do_status() {
   echo "  • Modo Animación : ${PERF_MODE^^}"
   query_fps_status
   query_res_status
+  query_orient_status
   query_zoom_status
 }
 
@@ -432,6 +511,7 @@ do_start() {
     echo "[i] GNOME 48 ya está en ejecución."
     [ -n "$MODE_SET" ] && apply_perf_mode_live "$MODE_SET"
     [ -n "$FPS_SET" ] && apply_fps "$FPS_SET"
+    [ -n "$ORIENT_SET" ] && apply_orientation "$ORIENT_SET" 0
     [ -n "$RES_SET" ] && apply_resolution "$RES_SET" 0
     [ -n "$ZOOM_SET" ] && apply_zoom "$ZOOM_SET" 0
     echo "[i] Abriendo Termux:X11 sin reiniciar la sesión..."
@@ -445,6 +525,7 @@ do_start() {
   else
     (apply_fps "$FPS_TARGET" >/dev/null 2>&1 || true) &
   fi
+  [ -n "$ORIENT_SET" ] && apply_orientation "$ORIENT_SET" 1
   [ -n "$RES_SET" ] && RES_TARGET="$RES_SET"
   [ -n "$ZOOM_SET" ] && ZOOM_TARGET="$ZOOM_SET"
   save_conf
@@ -489,22 +570,22 @@ do_start() {
           "displayResolutionMode":"scaled" \
           "displayScale":"${scale_val}" \
           "adjustResolution":"true" \
-          "forceOrientation":"auto" \
+          "forceOrientation":"${ORIENTATION_TARGET}" \
           "touchMode":"Direct touch" \
           "tapToMove":"true" \
           "showAdditionalKbd":"false" \
-          "fullscreen":"true" \
+          "fullscreen":"false" \
           "pointerCapture":"true" >/dev/null 2>&1 || true
       else
         DISPLAY=:0 timeout 4 termux-x11-preference \
           "displayResolutionMode":"custom" \
           "displayResolutionCustom":"${RES_TARGET}" \
           "adjustResolution":"false" \
-          "forceOrientation":"auto" \
+          "forceOrientation":"${ORIENTATION_TARGET}" \
           "touchMode":"Direct touch" \
           "tapToMove":"true" \
           "showAdditionalKbd":"false" \
-          "fullscreen":"true" \
+          "fullscreen":"false" \
           "pointerCapture":"true" >/dev/null 2>&1 || true
       fi
     ) &
@@ -516,7 +597,7 @@ do_start() {
   zoom_factor=$(python3 -c "print(round(${ZOOM_TARGET%\%} / 100.0, 2))")
   cursor_sz=$(python3 -c "print(max(16, int(round(24 * (${ZOOM_TARGET%\%} / 100.0)))))")
 
-  echo "[4/4] Lanzando Debian 13 + GNOME 48 [FPS: ${FPS_TARGET} | Res: ${RES_TARGET} | Zoom: ${ZOOM_TARGET}% | Modo: ${PERF_MODE}]..."
+  echo "[4/4] Lanzando Debian 13 + GNOME 48 [FPS: ${FPS_TARGET} | Res: ${RES_TARGET} | Ori: ${ORIENTATION_TARGET} | Zoom: ${ZOOM_TARGET}% | Modo: ${PERF_MODE}]..."
   echo "      (Para cerrar: desktop --stop | Para reiniciar: desktop --reboot)"
 
   proot-distro login "$DISTRO_TARGET" \
@@ -712,6 +793,31 @@ while [ $# -gt 0 ]; do
       ZOOM_SET="${1#*=}"
       shift
       ;;
+    --landscape|--horizontal)
+      ORIENT_SET="landscape"
+      shift
+      ;;
+    --portrait|--vertical)
+      ORIENT_SET="portrait"
+      shift
+      ;;
+    --auto)
+      ORIENT_SET="auto"
+      shift
+      ;;
+    --orientation|--orient)
+      if [ -z "${2:-}" ] || [[ "${2:-}" == -* ]]; then
+        QUERY_ORIENT=1
+        shift
+      else
+        ORIENT_SET="$2"
+        shift 2
+      fi
+      ;;
+    --orientation=*|--orient=*)
+      ORIENT_SET="${1#*=}"
+      shift
+      ;;
     *)
       suggest_flag "$1"
       ;;
@@ -747,6 +853,13 @@ case "$ACTION" in
       fi
       did_something=1
     fi
+    if [ -n "$ORIENT_SET" ]; then
+      apply_orientation "$ORIENT_SET" 0
+      if ! is_gnome_running; then
+        echo '    (Nota: Desktop not running, use "desktop --start" to proceed with this orientation)'
+      fi
+      did_something=1
+    fi
     if [ -n "$RES_SET" ]; then
       apply_resolution "$RES_SET" 0
       if ! is_gnome_running; then
@@ -767,6 +880,10 @@ case "$ACTION" in
     fi
     if [ "$QUERY_RES" -eq 1 ]; then
       query_res_status
+      did_something=1
+    fi
+    if [ "$QUERY_ORIENT" -eq 1 ]; then
+      query_orient_status
       did_something=1
     fi
     if [ "$QUERY_ZOOM" -eq 1 ]; then
