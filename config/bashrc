@@ -3,3 +3,5 @@ export EDITOR="micro"
 export VISUAL="micro"
 termux-wake-lock 2>/dev/null || true
 pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
+
+[[ -r "$HOME/.grok/completions/bash/grok.bash" ]] && source "$HOME/.grok/completions/bash/grok.bash"

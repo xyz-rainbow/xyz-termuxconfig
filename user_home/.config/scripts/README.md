@@ -23,5 +23,9 @@ Todos los scripts de este directorio están enlazados simbólicamente en `~/.loc
   - Convierte `Ctrl + Alt + [1..0, ', ¡]` en `F1–F12`.
 - **`arecord`** (`~/.local/bin/arecord`):
   Wrapper de captura de micrófono para el comando `/voice` de Antigravity CLI, redirigiendo la grabación a `sox -t pulseaudio default` con ganancia `+12 dB`.
+- **`grok`** (`~/.local/bin/grok`):
+  Wrapper de compatibilidad para el binario oficial ARM64 de xAI Grok (`~/.grok/bin/grok`, enlazado estáticamente con `musl`). En Termux monta `$PREFIX/etc`, `/bin`, `/usr/bin` y `/tmp` mediante `proot` y exporta `SSL_CERT_FILE`, `SSL_CERT_DIR` y `BROWSER=termux-open-url` para que DNS, TLS y OAuth funcionen sin root; dentro de `proot-distro` ejecuta el binario directamente.
+- **`pad-adb`** (`~/.local/bin/pad-adb`):
+  Herramienta de automatización para ADB inalámbrico (`--pair <código>`, `--start`, `--stop`) que aplica ajustes del sistema (desactivación de Phantom Process Killer y lista blanca Doze para `com.termux.x11`).
 - **`GUIDE.md`**:
   Copia local persistente de la guía maestra de configuración y uso de la Xiaomi Pad 6.

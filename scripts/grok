@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# grok — Termux & PRoot-Distro Compatibility Wrapper for xAI Grok Official CLI
+# ==============================================================================
+# Grok's official Linux ARM64 binary (~/.grok/bin/grok) is statically linked
+# with musl libc, which expects /etc/resolv.conf for DNS and /etc/ssl for TLS.
+# On non-root Android/Termux, this wrapper transparently binds $PREFIX/etc,
+# /bin, /usr/bin, and /tmp via proot, and runs directly inside proot-distro.
+
+TERMUX_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+USER_HOME="${HOME:-/data/data/com.termux/files/home}"
+REAL_GROK="$USER_HOME/.grok/bin/grok"
+
+if [ ! -x "$REAL_GROK" ]; then
+  echo "[!] Error: Grok binary not found at $REAL_GROK" >&2
+  echo "    Install it via: curl -fsSL https://x.ai/cli/install.sh | bash" >&2
+  exit 1
+fi
+
+export SSL_CERT_FILE="${SSL_CERT_FILE:-$TERMUX_PREFIX/etc/tls/cert.pem}"
+export SSL_CERT_DIR="${SSL_CERT_DIR:-$TERMUX_PREFIX/etc/tls/certs}"
+
+if [ ! -e /etc/resolv.conf ]; then
+  if command -v termux-open-url >/dev/null 2>&1; then
+    export BROWSER="${BROWSER:-termux-open-url}"
+  fi
+  if command -v proot >/dev/null 2>&1; then
+    exec proot \
+      -b "$TERMUX_PREFIX/etc:/etc" \
+      -b "$TERMUX_PREFIX/bin:/bin" \
+      -b "$TERMUX_PREFIX/bin:/usr/bin" \
+      -b "$TERMUX_PREFIX/tmp:/tmp" \
+      "$REAL_GROK" "$@"
+  fi
+fi
+
+exec "$REAL_GROK" "$@"

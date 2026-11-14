@@ -104,7 +104,7 @@ install_module_dotfiles() {
       cp -r "$REPO_DIR/user_home/.config/"* "$USER_HOME/.config/"
     fi
 
-    for s in desktop arecord; do
+    for s in desktop arecord grok; do
       if [ -f "$REPO_DIR/scripts/$s" ]; then
         cp "$REPO_DIR/scripts/$s" "$USER_HOME/.config/scripts/$s"
         chmod +x "$USER_HOME/.config/scripts/$s"
@@ -374,11 +374,43 @@ EOF
     npm install -g opencode-ai 2>/dev/null || echo "[!] Notice: OpenCode installed."
   fi
 
-  # 4. Grok Official CLI (xAI)
+  # 4. Grok Official CLI (xAI) / Grok Build
   if [[ "$sel_agents" == *"GROK"* ]]; then
     echo "----------------------------------------------------------------------"
-    echo "[*] Installing xAI Grok Official CLI..."
-    curl -fsSL https://x.ai/cli/install.sh 2>/dev/null | bash 2>/dev/null || npm install -g @ai-sdk/harness-grok-build 2>/dev/null || echo "[!] Notice: Grok CLI setup finished."
+    echo "[*] Installing xAI Grok Official CLI / Grok Build..."
+    pkg install -y proot ca-certificates resolv-conf brotli 2>/dev/null || true
+
+    if [ ! -x "$USER_HOME/.grok/bin/grok" ]; then
+      curl -fsSL https://x.ai/cli/install.sh 2>/dev/null | bash 2>/dev/null || true
+
+      if [ ! -x "$USER_HOME/.grok/bin/grok" ]; then
+        tmp_grok="$(mktemp -d)"
+        mkdir -p "$USER_HOME/.grok/bin"
+        if curl -fsSL https://registry.npmjs.org/@xai-official/grok-linux-arm64/-/grok-linux-arm64-0.1.220.tgz 2>/dev/null | tar -xz -C "$tmp_grok" 2>/dev/null && command -v brotli >/dev/null 2>&1; then
+          brotli -d "$tmp_grok/package/bin/grok.br" 2>/dev/null || true
+          cp "$tmp_grok/package/bin/grok" "$USER_HOME/.grok/bin/grok" 2>/dev/null || true
+          chmod +x "$USER_HOME/.grok/bin/grok" 2>/dev/null || true
+        fi
+        rm -rf "$tmp_grok" 2>/dev/null || true
+      fi
+    fi
+
+    if [ -f "$REPO_DIR/scripts/grok" ]; then
+      mkdir -p "$USER_HOME/.config/scripts" "$USER_HOME/.local/bin"
+      cp "$REPO_DIR/scripts/grok" "$USER_HOME/.config/scripts/grok"
+      chmod +x "$USER_HOME/.config/scripts/grok"
+      ln -sf "$USER_HOME/.config/scripts/grok" "$USER_HOME/.local/bin/grok"
+      ln -sf "$USER_HOME/.config/scripts/grok" "$TERMUX_PREFIX/bin/grok"
+    fi
+
+    if [ -f "$USER_HOME/.bashrc" ]; then
+      sed -i 's|export PATH="\$HOME/\.grok/bin:\$PATH"|export PATH="\$HOME/.local/bin:\$PREFIX/bin:\$PATH:\$HOME/.grok/bin"|g' "$USER_HOME/.bashrc" 2>/dev/null || true
+    fi
+
+    if [ -x "$USER_HOME/.local/bin/grok" ]; then
+      "$USER_HOME/.local/bin/grok" update 2>/dev/null || true
+      echo "[✓] Grok CLI ready: $("$USER_HOME/.local/bin/grok" --version 2>/dev/null)"
+    fi
   fi
 
   # 5. DeepSeek Harness CLI (dsh)
