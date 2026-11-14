@@ -417,8 +417,10 @@ EOF
   if [[ "$sel_agents" == *"DEEPSEEK"* ]]; then
     echo "----------------------------------------------------------------------"
     echo "[*] Installing DeepSeek Harness CLI (dsh)..."
-    if command -v python3 >/dev/null 2>&1; then
-      pip install deepseek-harness 2>/dev/null || pip install dsh 2>/dev/null || echo "[!] Notice: DeepSeek framework package configured."
+    if command -v dsh >/dev/null 2>&1; then
+      echo "[✓] DeepSeek Harness CLI already installed: $(dsh --version 2>/dev/null)"
+    elif command -v npm >/dev/null 2>&1; then
+      npm install -g --ignore-scripts @deepseek-ai/dsh 2>/dev/null || npm install -g @deepseek-ai/dsh 2>/dev/null || echo "[!] Notice: DeepSeek framework package configured."
     fi
   fi
 
